@@ -1,0 +1,40 @@
+---
+title: "Question 3"
+author: "Nithin Sameer Yerramilli"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+df = read.csv("NIJ_s_Recidivism_Challenge_Full_Dataset (5).csv")
+
+install.packages("rpart")
+
+library(rpart)
+
+fit <- rpart(Recidivism_Within_3years ~ Jobs_Per_Year + Percent_Days_Employed, data = df, method = "class")
+
+summary(fit)
+```
+
+```{r}
+install.packages("rpart.plot")
+library(rpart.plot)
+
+rpart.plot(fit, yesno=2, type=0, extra=1)
+```
+
+```{r}
+correlationMatrix <- cor(df[c("Recidivism_Within_3years", "Jobs_Per_Year", "Percent_Days_Employed")], use = "complete.obs")
+print(correlationMatrix)
+```
+
+-   The correlation matrix and the decision tree output provide a comprehensive understanding of the relationship between the probability of recidivism and employment history, including the number of jobs per year and the percentage of days employed.
+
+-   From the correlation matrix, it can be inferred that both the number of jobs per year and the percentage of days employed are negatively correlated with recidivism. The correlation between recidivism and the number of jobs per year is -0.051, indicating a weak negative correlation. On the other hand, the correlation between recidivism and the percentage of days employed is stronger at -0.267, indicating a moderate negative correlation. This suggests that the likelihood of recidivism decreases as the number of jobs per year and the percentage of days employed increase. However, it's important to note that correlation does not imply causation.
+
+-   The decision tree output provides a more nuanced view of the relationship between these variables. From the variable importance section, it appears that the number of jobs per year (51%) and the percentage of days employed (49%) are almost equally important in predicting recidivism. This means that both variables significantly contribute to the model's ability to accurately predict recidivism.
+
+-   Looking at the decision tree's splits, it's clear that certain thresholds in the number of jobs per year and the percentage of days employed lead to different predictions about recidivism. For instance, the first split is based on whether the percentage of days employed is less than approximately 0.643. If it is, the decision tree predicts a lower likelihood of recidivism (node 2), whereas if it's greater, the decision tree predicts a higher likelihood of recidivism (node 3). This suggests that there's a non-linear relationship between these variables and recidivism, which wouldn't be captured by a simple correlation coefficient.
+
+-   In conclusion, while there is a negative correlation between recidivism and both the number of jobs per year and the percentage of days employed, the relationship is complex and non-linear. As such, an increase in the number of jobs per year and the percentage of days employed doesn't necessarily lead to a decrease in the likelihood of recidivism in a linear fashion. The decision tree model provides a more detailed understanding of this relationship, demonstrating that certain thresholds in these variables can lead to different predictions about recidivism.

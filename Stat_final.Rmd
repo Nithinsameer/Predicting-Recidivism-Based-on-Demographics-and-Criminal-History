@@ -1,0 +1,499 @@
+---
+title: "Stat_final"
+author: "Nithin Sameer Yerramilli"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Research Question1
+
+## 1) Which factors are most significant in predicting recidivism three years after being released from prison?
+
+```{r message=FALSE, warning=FALSE}
+#importing required packages
+library(randomForest)
+library(tidyverse)
+library(readr)
+library(glmnet)
+library(caret)
+library(ROCR)
+library(pROC)
+library(dplyr)
+```
+
+```{r include=FALSE}
+#importing the dataset
+recidivism_df=read.csv("NIJ_s_Recidivism_Challenge_Full_Dataset (5).csv")
+recidivism_df <- na.omit(recidivism_df)
+str(recidivism_df)
+```
+
+```{r}
+# Removing the unwanted and null variables and factoring them
+recidivism_df<-subset(recidivism_df,select=-ID)
+recidivism_df$Supervision_Risk_Score_First<-as.factor(recidivism_df$Supervision_Risk_Score_First)
+recidivism_df <- recidivism_df %>% mutate_if(is.character, as.factor)
+recidivism_df <- recidivism_df %>% mutate_if(is.logical, as.factor)
+#Displaying the summary statistics and structure of the dataset
+str(recidivism_df)
+summary(recidivism_df)
+```
+
+## Displaying countplots of few Variables.
+
+```{r eval=FALSE}
+install.packages("shiny")
+library(shiny)
+ui <- fluidPage(
+  selectInput("plot_select", label = "Select a plot", choices = c("Race",
+                                                                   "Gang Affiliated",
+                                                                   "Age at Release",
+                                                                   "Prior Arrest Episodes Felony",
+                                                                   "Prior Conviction Episodes Misd",
+                                                                   "Delinquency Reports",
+                                                                   "Supervision Risk Score First")),
+
+  plotOutput("selected_plot")
+)
+
+server <- function(input, output) {
+
+  output$selected_plot <- renderPlot({
+    if (input$plot_select == "Gang Affiliated") {
+      plot_choice <- ggplot(recidivism_df, aes(x = Gang_Affiliated, fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    } else if (input$plot_select == "Age at Release") {
+      plot_choice <- ggplot(recidivism_df, aes(x = Age_at_Release, fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    } else if (input$plot_select == "Prior Arrest Episodes Felony") {
+      plot_choice <- ggplot(recidivism_df, aes(x = Prior_Arrest_Episodes_Felony, fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    } else if (input$plot_select == "Prior Conviction Episodes Misd") {
+      plot_choice <- ggplot(recidivism_df, aes(x = Prior_Conviction_Episodes_Misd, fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    } else if (input$plot_select == "Delinquency Reports") {
+      plot_choice <- ggplot(recidivism_df, aes(x = Delinquency_Reports, fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    } else if (input$plot_select == "Supervision Risk Score First") {
+      plot_choice <- ggplot(recidivism_df, aes(x = as.factor(Supervision_Risk_Score_First), fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    } else if (input$plot_select == "Race") {
+      plot_choice <- ggplot(recidivism_df, aes(x = Race, fill = Recidivism_Within_3years)) + geom_bar(position = "dodge")
+    }
+
+    plot_choice
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+```
+
+-   Applying Various selection techniques and choosing the best model to list significant variables for predicting Recidivism
+
+### Using Random Forest method to know the important variables and using top 10 varibles for building logistic Regression Model
+
+```{r}
+set.seed(1729)
+trainIndex <- createDataPartition(recidivism_df$Recidivism_Within_3years, p = 0.8, list = FALSE)
+training_set <- recidivism_df[trainIndex, ]
+testing_set <- recidivism_df[-trainIndex, ]
+set.seed(1729)
+rf_model <- randomForest(Recidivism_Within_3years ~ ., data = training_set)
+varImpPlot(rf_model)
+important_vars <- row.names(varImp(rf_model)) %>% head(10)
+log_reg_model_rf_selected <- glm(Recidivism_Within_3years ~ ., data = training_set[, c("Recidivism_Within_3years", important_vars)], family = binomial(link = "logit"))
+glm_predicted_rf_selected <- predict(log_reg_model_rf_selected, testing_set[, important_vars], type = "response")
+glm_predicted_rf_selected_b <- rep("FALSE", nrow(testing_set))
+glm_predicted_rf_selected_b[glm_predicted_rf_selected >= .5] <- "TRUE"
+confusionMatrix(as.factor(glm_predicted_rf_selected_b), testing_set$Recidivism_Within_3years)
+# Building ROC Curve
+library(ROCR)
+pred_rf <- prediction(glm_predicted_rf_selected, testing_set$Recidivism_Within_3years)
+roc_rf <- performance(pred_rf, measure = "tpr", x.measure = "fpr")
+roc_obj <- roc(testing_set$Recidivism_Within_3years, glm_predicted_rf_selected)
+auc_rf <- auc(roc_obj)
+roc_df <- data.frame(fpr = roc_rf@x.values[[1]], tpr = roc_rf@y.values[[1]])
+g1<-ggplot(roc_df, aes(x = fpr, y = tpr)) +
+  geom_line(color = "green", size = 2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", size = 1) +
+  labs(title = "ROC Curve for Logistic Regression with Random Forest", x = "False Positive Rate", y = "True Positive Rate") +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(face = "bold", size = 12),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.background = element_blank())+
+  annotate("text", x = 0.7, y = 0.3, label = paste0("AUC = ", round(auc_rf, 3)), size = 5, color = "red")
+```
+
+### Using Chi-Square analysis for varibale selection and buiding a Logistic Regression model
+
+```{r}
+library(tidyr)
+library(dplyr)
+chi_square_results <- recidivism_df %>%
+  gather(key = "Variable", value = "Value", -Recidivism_Within_3years) %>%
+  group_by(Variable) %>%
+  summarize(Chi_Square = chisq.test(table(Value, Recidivism_Within_3years))$statistic,
+            P_Value = chisq.test(table(Value, Recidivism_Within_3years))$p.value) %>%
+  filter(P_Value < 0.001)
+
+significant_vars <- chi_square_results$Variable
+significant_vars
+log_reg_model_chi_square <- glm(Recidivism_Within_3years ~ ., data = recidivism_df[, c("Recidivism_Within_3years", significant_vars)], family = binomial(link = "logit"))
+glm_predicted_chi_square <- predict(log_reg_model_chi_square, testing_set[, significant_vars], type = "response")
+glm_predicted_chi_square_b <- ifelse(glm_predicted_chi_square >= .5, "TRUE", "FALSE")
+confusionMatrix(as.factor(glm_predicted_chi_square_b), testing_set$Recidivism_Within_3years)
+library(ggplot2)
+library(pROC)
+roc_curve_chi_square <- roc(testing_set$Recidivism_Within_3years, glm_predicted_chi_square, levels = rev(levels(as.factor(testing_set$Recidivism_Within_3years))))
+auc_chi_square <- auc(roc_curve_chi_square)
+pred_chi <- prediction(glm_predicted_chi_square, testing_set$Recidivism_Within_3years)
+roc_chi <- performance(pred_chi, measure = "tpr", x.measure = "fpr")
+roc_data <- data.frame(
+  FPR = 1 - roc_curve_chi_square$specificities,
+  TPR = roc_curve_chi_square$sensitivities
+)
+g2<-ggplot(data = roc_data) +
+  geom_line(aes(x = FPR, y = TPR), color = "blue", size = 2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray") +
+  geom_text(aes(label = paste("AUC =", round(auc_chi_square, 2))), 
+            x = 0.5, y = 0.2, vjust = 0, hjust = 0, 
+            color = "black", size = 4) +
+  labs(title = "ROC Curve - Logistic Regression Model with Chi-Square Selection",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  theme_minimal()
+```
+
+### Using Stepwise selection for varibale selection and buiding a Logistic Regression model
+
+```{r include=FALSE}
+library(MASS)
+#full model 
+full_model <- glm(Recidivism_Within_3years ~ ., data = training_set, family = binomial(link = "logit"))
+#null model 
+null_model <- glm(Recidivism_Within_3years ~ 1, data = training_set, family = binomial(link = "logit"))
+#Perform stepwise variable selection
+stepwise_model <- stepAIC(null_model, scope = list(lower = null_model, upper = full_model), direction = "both", trace = TRUE)
+```
+
+```{r}
+glm.predicted_stepwise <- predict(stepwise_model, testing_set, type="response")
+glm.predicted_s = rep("FALSE", nrow(testing_set))
+glm.predicted_s[glm.predicted_stepwise >= 0.5] = "TRUE"
+confusionMatrix(as.factor(glm.predicted_s), testing_set$Recidivism_Within_3years)
+library(ROCR)
+glm_prediction <- prediction(glm.predicted_stepwise, testing_set$Recidivism_Within_3years)
+roc_step <- performance(glm_prediction, measure = "tpr", x.measure = "fpr")
+roc_obj_s<- roc(testing_set$Recidivism_Within_3years, glm.predicted_stepwise)
+auc_stepwise<- auc(roc_obj_s)
+#Building ROC curve
+roc_data_s <- data.frame(fpr = roc_step@x.values[[1]], tpr = roc_step@y.values[[1]])
+roc_data_s$model <- "Stepwise Logistic Regression"
+g3<-ggplot(roc_data_s, aes(x = fpr, y = tpr, color = model)) +
+  geom_line(size = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", size = 1) +
+  labs(title = "ROC Curve for Stepwise Selection", x = "False Positive Rate", y = "True Positive Rate") +
+  scale_color_manual(values = c("Stepwise Logistic Regression" = "blue")) +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12))+
+  annotate("text", x = 0.7, y = 0.3, label = paste0("AUC = ", round(auc_stepwise, 3)), size = 5, color = "blue")
+  
+```
+
+### Combined ROC Curve
+
+```{r}
+library(ROCR)
+
+# Create prediction objects for each model
+pred_rf <- prediction(glm_predicted_rf_selected, testing_set$Recidivism_Within_3years)
+pred_chi <- prediction(glm_predicted_chi_square, testing_set$Recidivism_Within_3years)
+glm_prediction <- prediction(glm.predicted_stepwise, testing_set$Recidivism_Within_3years)
+
+# Compute ROC curves for each model
+roc_rf <- performance(pred_rf, measure = "tpr", x.measure = "fpr")
+roc_chi <- performance(pred_chi, measure = "tpr", x.measure = "fpr")
+roc_stepwise <- performance(glm_prediction, measure = "tpr", x.measure = "fpr")
+
+roc_obj_rf<- roc(testing_set$Recidivism_Within_3years,glm_predicted_rf_selected )
+roc_obj_chi<- roc(testing_set$Recidivism_Within_3years, glm_predicted_chi_square)
+roc_obj_stepwise<- roc(testing_set$Recidivism_Within_3years, glm.predicted_stepwise)
+# Compute AUC for each model
+auc_rf <- auc(roc_obj_rf)
+auc_chi <- auc(roc_obj_chi)
+auc_stepwise <- auc(roc_obj_stepwise)
+
+roc_data <- data.frame(
+  fpr = c(roc_rf@x.values[[1]], roc_chi@x.values[[1]], roc_stepwise@x.values[[1]]),
+  tpr = c(roc_rf@y.values[[1]], roc_chi@y.values[[1]], roc_stepwise@y.values[[1]]),
+  model = factor(rep(c("Random Forest", "Chi-Square", "Stepwise"), c(length(roc_rf@x.values[[1]]), length(roc_chi@x.values[[1]]), length(roc_stepwise@x.values[[1]]))))
+)
+
+g4<-ggplot(roc_data, aes(x = fpr, y = tpr, color = model)) +
+  geom_line(size = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", size = 1) +
+  labs(title = "ROC Curves for Logistic Regression Models", x = "False Positive Rate", y = "True Positive Rate") +
+  scale_color_manual(values = c("Random Forest" = "green", "Chi-Square" = "red", "Stepwise" = "blue")) +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12),
+        legend.title = element_blank(),
+        legend.text = element_text(face = "bold", size = 12))
+```
+
+## Choosing the best model from above models based on accuracy and ROC curve
+
+```{r eval=FALSE}
+library(shiny)
+library(ggplot2)
+library(ROCR)
+
+# Load the data and create the logistic regression models here
+
+# Create a list of the plots and their names
+plots <- list(
+  "ROC Curve for Logistic Regression with Chi-Square" =g2 ,
+
+  "ROC Curve for Logistic Regression with Random Forest" = g1,
+
+  "ROC Curve for Stepwise Selection" = g3,
+
+  "ROC Curves for All Logistic Regression Models" =g4
+)
+
+# Define the UI for the Shiny app
+ui <- fluidPage(
+  selectInput("plot", "Choose a plot:", choices = names(plots)),
+  plotOutput("plot_output")
+)
+
+# Define the server for the Shiny app
+server <- function(input, output, session) {
+  observeEvent(input$close, {
+    js$closeWindow()
+    stopApp()
+  })
+  output$plot_output <- renderPlot({
+    print(plots[[input$plot]])
+  })
+}
+
+# Run the Shiny app
+shinyApp(ui = ui, server = server)
+
+```
+
+-   From the above three models based on accuracy and AUC (Area Under ROC Curve) logistic regression with stepwise and Chi-Square have almost same accuracy and AUC. When the accuracy and area under the ROC curve for both logistic regression by Chi-Square and logistic regression by stepwise selection are equal, we favor the model that is easier to understand. As we know chi-square test is performed between two variables and does not account for together variation. Hence due to this uncertainity and given that Stepwise has yielded similar results, we have decided to go with Stepwise Selection.
+
+```{r}
+summary(stepwise_model)
+```
+
+## Conclusion
+
+-   The most important factors in predicting recidivism three years after being released from jail are, according to the p-values in the summary:
+
+-   Age at release: The likelihood that a person will commit another crime decreases with age. Age groups 28 to 32, 33 to 37, 38 to 42, and 43 to 47 all exhibit extremely low p-values, pointing to a significant correlation with recidivism.
+
+-   Gang affiliation: People who are members of gangs are more likely to commit crimes again. This variable has a very low p-value, which suggests a high correlation with recidivism.
+
+-   Supervision level: People who are under strict or specialized supervision are less likely to commit crimes again than those who are under regular supervision. These two factors have low p-values, which suggests a high correlation with recidivism.
+
+-   Prior arrests: Having more arrests in the past, especially for violent or drug-related offenses, is linked to a higher risk of reoffending.
+
+-   Delinquency records: People who have more delinquent records are more prone to commit crimes again. This variable's extremely low p-value suggests a high correlation with recidivism.
+
+-   Drug test results: Reoffending is more likely when a drug test is positive, especially for meth.
+
+-   Employment: People who work a larger proportion of the time and who work multiple jobs annually are less likely to commit crimes again. These two factors' extremely low p-values suggest a substantial correlation between them and recidivism.
+
+# Research Question 2
+
+## 2) Are there racial differences in the supervision risk scores and levels upon release?
+
+```{r}
+risk_score_table <- table(recidivism_df$Race, recidivism_df$Supervision_Risk_Score_First)
+print(risk_score_table)
+```
+
+```{r}
+# Chi-square test for independence between Race and Supervision_Risk_Score_First
+risk_score_chi_square <- chisq.test(risk_score_table)
+print(risk_score_chi_square)
+```
+
+```{r}
+# Check class of risk_score_table object
+class(risk_score_table)
+
+# Calculate number of successes and total number of observations for each race group
+black_successes <- as.numeric(risk_score_table["BLACK", ])
+black_total <- sum(risk_score_table["BLACK", ])
+
+white_successes <- as.numeric(risk_score_table["WHITE", ])
+white_total <- sum(risk_score_table["WHITE", ])
+
+# Perform pairwise comparisons for BLACK group
+black_pairs <- pairwise.prop.test(black_successes, n = rep(black_total, length(black_successes)), p.adjust.method = "bonferroni")
+print(black_pairs)
+
+# Perform pairwise comparisons for WHITE group
+white_pairs <- pairwise.prop.test(white_successes, n = rep(white_total, length(white_successes)), p.adjust.method = "bonferroni")
+print(white_pairs)
+
+```
+
+```{r}
+# Cross-tabulation for Race and Supervision_Level_First
+supervision_level_table <- table(recidivism_df$Race, recidivism_df$Supervision_Level_First)
+print(supervision_level_table)
+```
+
+```{r}
+# Chi-square test for independence between Race and Supervision_Level_First
+supervision_level_chi_square <- chisq.test(supervision_level_table)
+print(supervision_level_chi_square)
+```
+
+```{r}
+class(supervision_level_table)
+
+# Calculate number of successes and total number of observations for each race group
+black_successes <- as.numeric(supervision_level_table["BLACK", ])
+black_total <- sum(supervision_level_table["BLACK", ])
+
+white_successes <- as.numeric(supervision_level_table["WHITE", ])
+white_total <- sum(supervision_level_table["WHITE", ])
+
+# Perform pairwise comparisons for BLACK group
+black_pairs <- pairwise.prop.test(black_successes, n = rep(black_total, length(black_successes)), p.adjust.method = "bonferroni")
+print(black_pairs)
+
+# Perform pairwise comparisons for WHITE group
+white_pairs <- pairwise.prop.test(white_successes, n = rep(white_total, length(white_successes)), p.adjust.method = "bonferroni")
+print(white_pairs)
+```
+
+```{r eval=FALSE}
+library(shiny)
+library(ggplot2)
+library(rpart)
+
+# Normalize the risk_score_table to get proportions
+risk_score_props <- prop.table(risk_score_table, margin = 1)
+
+# Convert the risk_score_props matrix into a data frame for plotting
+risk_score_df <- as.data.frame(risk_score_props)
+risk_score_df$Race <- rownames(risk_score_props)[risk_score_df$Var1]
+colnames(risk_score_df) <- c("Race_Index", "Risk_Score", "Proportion", "Race")
+
+# Normalize the supervision_level_table to get proportions
+supervision_level_props <- prop.table(supervision_level_table, margin = 1)
+
+# Convert the supervision_level_props matrix into a data frame for plotting
+supervision_level_df <- as.data.frame(supervision_level_props)
+supervision_level_df$Race <- rownames(supervision_level_props)[supervision_level_df$Var1]
+colnames(supervision_level_df) <- c("Race_Index", "Supervision_Level", "Proportion", "Race")
+
+# Define the UI
+ui <- fluidPage(
+  titlePanel("Supervision Data"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("plot_type", label = "Choose a plot to display",
+                  choices = c("Supervision Risk Scores by Race", "Supervision Levels by Race"))
+    ),
+    mainPanel(
+      plotOutput("plot")
+    )
+  )
+)
+
+# Define the server
+server <- function(input, output) {
+  output$plot <- renderPlot({
+    if (input$plot_type == "Supervision Risk Scores by Race") {
+      ggplot(risk_score_df, aes(x = Risk_Score, y = Proportion, fill = Race)) +
+        geom_bar(stat = "identity", position = "dodge") +
+        labs(title = "Supervision Risk Scores by Race",
+             x = "Supervision Risk Score",
+             y = "Proportion") +
+        theme_minimal()
+    } else if (input$plot_type == "Supervision Levels by Race") {
+      ggplot(supervision_level_df, aes(x = Supervision_Level, y = Proportion, fill = Race)) +
+        geom_bar(stat = "identity", position = "dodge") +
+        labs(title = "Supervision Levels by Race",
+             x = "Supervision Level",
+             y = "Proportion") +
+        theme_minimal()
+    }
+  })
+}
+
+# Run the app
+shinyApp(ui = ui, server = server)
+
+```
+
+## Conclusion:
+
+-   Based on the given outputs, there are significant racial differences in both the supervision risk scores and levels upon release:
+
+-   Supervision Risk Score: For lower risk scores (1, 2, 3), the proportion of WHITE individuals is higher than the proportion of BLACK individuals. For mid-range risk scores (4, 5, 6, 7), the proportion of BLACK individuals is higher than the proportion of WHITE individuals. For higher risk scores (8, 9, 10), the proportions are more balanced between the two racial groups, with the BLACK individuals still having a higher proportion in scores 8 and 9.
+
+-   Supervision Risk Score: The p-value for the Chi-square test between race and supervision risk score is less than 2.2e-16, which is much smaller than the significance level of 0.05. Therefore, you can reject the null hypothesis and conclude that there is a significant relationship between race and supervision risk score, indicating racial differences in the supervision risk scores upon release.
+
+-   Supervision Risk Score: Looking at the results, we see that many of the p-values are extremely small (\< 2e-16), indicating a statistically significant difference in the proportions between different risk score levels within each racial group. There are also some comparisons where the difference is not statistically significant (p-value \> 0.05), as indicated by values closer to 1.
+
+-   Supervision Level: The p-value for the Chi-square test between race and supervision level is 3.569e-06, which is also smaller than the significance level of 0.05. This means you can reject the null hypothesis and conclude that there is a significant relationship between race and supervision level, indicating racial differences in the supervision levels upon release.
+
+-   Supervision Level: For the High supervision level, the proportion of BLACK individuals is higher than the proportion of WHITE individuals.
+
+-   Supervision Level: Looking at the results, we see that all the p-values are very small (\< 2e-16), indicating a statistically significant difference in the proportions of each supervision level within each racial group. The only exception is the comparison between the third and fourth supervision levels in the BLACK group, where the p-value is 0.0097, still statistically significant but not as strong as the other comparisons.
+
+-   For the Specialized supervision level, the proportion of BLACK individuals is higher than the proportion of WHITE individuals. For the Standard supervision level, the proportion of BLACK individuals is higher than the proportion of WHITE individuals.
+
+-   Based on these observations, there are differences in how race impacts supervision risk scores and levels upon release. The data shows that BLACK individuals have a higher proportion of higher risk scores and more restrictive supervision levels (High and Specialized). However, it's essential to remember that correlation does not imply causation, and these findings should be interpreted cautiously. It's important to consider other factors and contextual information when assessing racial disparities in supervision risk scores and levels upon release.
+
+# Research Question3
+
+## 3) Does the possibility of recidivism anyway related with employment history,including the number of jobs held annually and the percentage of days worked?
+
+```{r}
+library(rpart)
+
+fit <- rpart(Recidivism_Within_3years ~ Jobs_Per_Year + Percent_Days_Employed, data = recidivism_df, method = "class")
+summary(fit)
+```
+
+```{r}
+library(rpart.plot)
+#rpart.plot(fit, yesno=2, type=0, extra=1)
+
+rpart.plot(fit, 
+           type = 4,  # use type 4 for the most detailed plot
+           extra = 101,  # display the percentage of observations in each node
+           box.palette = "GnBu",  # use a green-blue color palette
+           shadow.col = "gray",  # add shadows to the boxes
+           nn = TRUE,  # display the node numbers
+           fallen.leaves = TRUE,  # put the leaves on the bottom of the plot
+           main = "Decision Tree")  # add a title to the plot
+```
+
+## Conclusion
+
+-   The decision tree output provides a more nuanced view of the relationship between these variables. From the variable importance section, it appears that the number of jobs per year (51%) and the percentage of days employed (49%) are almost equally important in predicting recidivism. This means that both variables significantly contribute to the model's ability to accurately predict recidivism.
+
+-   Looking at the decision tree's splits, it's clear that certain thresholds in the number of jobs per year and the percentage of days employed lead to different predictions about recidivism. For instance, the first split is based on whether the percentage of days employed is less than approximately 0.643. If it is, the decision tree predicts a lower likelihood of recidivism (node 2), whereas if it's greater, the decision tree predicts a higher likelihood of recidivism (node 3). This suggests that there's a non-linear relationship between these variables and recidivism, which wouldn't be captured by a simple correlation coefficient.
+
+-   In conclusion, while there is a negative correlation between recidivism and both the number of jobs per year and the percentage of days employed, the relationship is complex and non-linear. As such, an increase in the number of jobs per year and the percentage of days employed doesn't necessarily lead to a decrease in the likelihood of recidivism in a linear fashion. The decision tree model provides a more detailed understanding of this relationship, demonstrating that certain thresholds in these variables can lead to different predictions about recidivism.
